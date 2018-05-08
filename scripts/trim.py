@@ -6,41 +6,52 @@ from itertools import izip
 from argparse import ArgumentParser
 
 
-def plot_alignment(seqs, chars, sums, chi2, stds, prop, chi2_cut, lseqs,
+def plot_alignment(seqs, chars, sums, chi2, stds, prop, chi2_cut,
                    outdir=None, fname=''):
     from matplotlib import pyplot as plt, colors
 
     if len(chars) == 4:
         cmap = colors.LinearSegmentedColormap.from_list("",
-                                                        ["#F8F9F9",
-                                                         "#d62728", "#1f77b4",
+                                                        ["#d62728", "#1f77b4",
                                                          "#ff7f0e", "#2ca02c"],
-                                                        N=len(chars) + 1)
+                                                        N=len(chars))
+    else:
+        cmap = plt.cm.get_cmap('tab20b')
+
+    nseqs, lseqs = len(seqs), len(seqs[0])
 
     values = dict((c, i) for i, c in enumerate(chars, 1))
-    values['-'] = 0
+    values['-'] = float('nan')
 
-    fig = plt.figure(figsize=(7, 20))
-    ax1 = plt.subplot2grid((14, 20), (0, 0), rowspan=10, colspan=19)
+    ncols = min(1 + lseqs / 100, 12)
+    nrows = min(1 + nseqs / 20 ,12)
+
+    fig = plt.figure(figsize=(1.5 * ncols + 3, 1.5 * nrows + 5))
+
+    ax1 = plt.subplot2grid((nrows + 4, ncols + 1), (0, 0), rowspan=nrows, colspan=ncols)
     im = ax1.imshow([[values[s] for s in l] for l in seqs], aspect='auto', cmap=cmap)
-    ax2 = plt.subplot2grid((14, 20), (10, 0), sharex=ax1, colspan=19)
+
+    ax2 = plt.subplot2grid((nrows + 4, ncols + 1), (nrows, 0), sharex=ax1, colspan=ncols)
     ax2.plot(sums)
     ax2.set_title('count no gaps')
 
-    ax3 = plt.subplot2grid((14, 20), (11, 0), sharex=ax1, colspan=19)
+    ax3 = plt.subplot2grid((nrows + 4, ncols + 1), (nrows + 1, 0), sharex=ax1, colspan=ncols)
     ax3.plot(stds)
     ax3.set_yscale("log")
     ax3.axhline(0.05, color='k', lw=1, ls='--')
     ax3.grid()
     ax3.set_title('log std')
 
-    ax4 = plt.subplot2grid((14, 20), (12, 0), sharex=ax1, colspan=19)
-    ax4.plot(prop)
+    colors = [cmap(i) for i in xrange(len(chars))]
+    ax4 = plt.subplot2grid((nrows + 4, ncols + 1), (nrows + 2, 0), sharex=ax1, colspan=ncols)
+    prop = zip(*prop)
+    for i in xrange(len(prop)):
+        ax4.plot(prop[i], color=colors[i])
     ax4.set_yticks([0.1, 0.25, 0.40])
     ax4.grid()
     ax4.set_title('proportion of sites')
 
-    ax5 = plt.subplot2grid((14, 20), (13, 0), sharex=ax1, colspan=19)
+    ax5 = plt.subplot2grid((nrows + 4, ncols + 1), (nrows + 3, 0), sharex=ax1, colspan=ncols)
     ax5.plot(chi2)
     ax5.grid()
     ax5.set_title('Chi2')
@@ -49,11 +60,11 @@ def plot_alignment(seqs, chars, sums, chi2, stds, prop, chi2_cut, lseqs,
 
     ax1.set_xlim(-0.5, lseqs + 0.5)
 
-    axcolor = plt.subplot2grid((14, 20), (8, 19), rowspan=2)
+    axcolor = plt.subplot2grid((nrows + 4, ncols + 1), (max(0, nrows - 3), ncols), rowspan=min(3, max(1, nrows)))
     fact = len(chars) / (len(chars) + 1.)
     plt.colorbar(im, cax=axcolor, ticks=[ i * fact + 0.5 * fact
                                           for i in range(len(chars) + 1)])
-    axcolor.set_yticklabels(['-'] + chars)
+    axcolor.set_yticklabels(chars)
 
     plt.tight_layout()
 
@@ -84,10 +95,6 @@ def main():
 
     fh = open(fname)
 
-    chi2_cut = 11.344866730144371  # 0.99 for 3 df
-    chi2_cut = 7.8147279032511765  # 0.95 for 3 df
-
-
     ################################################################################
     # load data
     print ' - loading data...'
@@ -109,6 +116,15 @@ def main():
 
     chars = set(s for l in seqs for s in l)
     chars = sorted([c for c in chars if c != '-'])
+
+    chi2_cut = { 3:  5.9915,  4:  7.8147,  5:  9.4877,  6: 11.0705,  7: 12.5916,
+                 8: 14.0671,  9: 15.5073, 10: 16.9190, 11: 18.3070, 12: 19.6751,
+                13: 21.0261, 14: 22.3620, 15: 23.6848, 16: 24.9958, 17: 26.2962,
+                18: 27.5871, 19: 28.8693, 20: 30.1435, 21: 31.4104, 22: 32.6706,
+                23: 33.9244, 24: 35.1725, 25: 36.4150, 26: 37.6525, 27: 38.8851,
+                28: 40.1133, 29: 41.3371, 30: 42.5570, 31: 43.7730, 32: 44.9853,
+                33: 46.1943, 34: 47.3999, 35: 48.6024, 36: 49.8018, 37: 50.9985,
+                38: 52.1923, 39: 53.3835, 40: 54.5722}[len(chars)]
 
     ################################################################################
     # keep only columns with data in at least a given number of sites
@@ -134,7 +150,10 @@ def main():
             expected[c] = sum(s==c for l in seqs for s in l)
         total = float(sum(expected.values()))
         for c in expected:
-            expected[c] /= total
+            try:
+                expected[c] /= total
+            except ZeroDivisionError:
+                expected[c] = 0
 
         print ('   * proportion of each site type: ' +
                ', '.join(['%s: %.4f' % (c.upper(), expected[c]) for c in chars]))
@@ -157,23 +176,8 @@ def main():
                 good_cols.append(i)
             prop.append([c / total for c in count])
 
-        mean = 1. / len(chars)
-        sums = []
-        prop = []
-        stds = []
-        chi2 = []
-        for i, col in enumerate(izip(*seqs)):
-            count = [col.count(c) for c in chars]
-            total = float(sum(count))
-            std = sum((c / total - mean)**2 for c in count)
-            stds.append(std**0.5)
-            sums.append(total)
-            av = [total  * expected[c] for c in chars]
-            chi2.append(sum((c - av[i])**2 / av[i] for i, c in enumerate(count)))
-            prop.append([c / total for c in count])
-
         if plot:
-            plot_alignment(seqs, chars, sums, chi2, stds, prop, chi2_cut, lseqs, outdir=outdir, fname='filt1')
+            plot_alignment(seqs, chars, sums, chi2, stds, prop, chi2_cut, outdir=outdir, fname='filt1')
         seqs = [[seqs[i][j] for j in good_cols] for i in xrange(nseqs)]
 
         print '   * kept {:,} of {:,} columns'.format(len(good_cols), lseqs)
@@ -225,7 +229,7 @@ def main():
                 av = [total  * expected[c] for c in chars]
                 chi2.append(sum((c - av[i])**2 / av[i] for i, c in enumerate(count)))
             prop.append([c / total for c in count])
-        plot_alignment(seqs, chars, sums, chi2, stds, prop, chi2_cut, lseqs, outdir=outdir, fname='final')
+        plot_alignment(seqs, chars, sums, chi2, stds, prop, chi2_cut, outdir=outdir, fname='final')
 
     ################################################################################
     # write result
