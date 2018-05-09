@@ -26,7 +26,7 @@ def plot_alignment(seqs, chars, sums, chi2, stds, prop, chi2_cut,
     ncols = min(1 + lseqs / 100, 12)
     nrows = min(1 + nseqs / 20 ,12)
 
-    fig = plt.figure(figsize=(1.5 * ncols + 3, 1.5 * nrows + 5))
+    _ = plt.figure(figsize=(1.5 * ncols + 3, 1.5 * nrows + 5))
 
     ax1 = plt.subplot2grid((nrows + 4, ncols + 1), (0, 0), rowspan=nrows, colspan=ncols)
     im = ax1.imshow([[values[s] for s in l] for l in seqs], aspect='auto', cmap=cmap)
@@ -182,25 +182,25 @@ def main():
 
         print '   * kept {:,} of {:,} columns'.format(len(good_cols), lseqs)
 
-
         lseqs = len(seqs[0])
 
     ################################################################################
     # mask lonely sites (surrounded by gaps)
-    print ' - removing single sites surrounded by gaps'
-    for l in seqs:
-        # rule for first and last
-        if l[1] == '-':
-            l[0] = '-'
-        if l[-2] == '-':
-            l[-1] = '-'
-        for i in xrange(lseqs - 2):
-            if l[i] == '-':
-                if l[i+2] == '-':
-                    l[i+1] = '-'
-                elif i+3 < lseqs and l[i+3] == '-':
-                    l[i+1] = '-'
-                    l[i+2] = '-'
+    if opts.mask_lonely:
+        print ' - removing single sites surrounded by gaps'
+        for l in seqs:
+            # rule for first and last
+            if l[1] == '-':
+                l[0] = '-'
+            if l[-2] == '-':
+                l[-1] = '-'
+            for i in xrange(lseqs - 2):
+                if l[i] == '-':
+                    if l[i+2] == '-':
+                        l[i+1] = '-'
+                    elif i+3 < lseqs and l[i+3] == '-':
+                        l[i+1] = '-'
+                        l[i+2] = '-'
 
     ################################################################################
     # keep only columns with data in at least a given number of sites (second round)
@@ -261,6 +261,9 @@ def get_options():
                         help=('filter out columns with random distribution '
                               'of sites with respect to background '
                               'proportions computed from input alignment'))
+    parser.add_argument('--mask_lonely', dest='mask_lonely',
+                        action='store_true', default=False,
+                        help=('treat as gaps sites surrounded by gaps '))
     parser.add_argument('-n', '--ndata', dest='ndata', metavar="INT", default=100,
                         type=int,
                         help='[%(default)s] Minimum number of sites with data per column')
