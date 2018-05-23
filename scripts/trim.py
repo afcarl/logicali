@@ -7,7 +7,11 @@ from argparse import ArgumentParser
 
 
 def plot_alignment(seqs, chars, sums, chi2, stds, prop, chi2_cut,
-                   outdir=None, fname=''):
+                   outdir=None, fname='', nox=False):
+    if nox:
+        import matplotlib
+        matplotlib.use('Agg')
+
     from matplotlib import pyplot as plt, colors
 
     if len(chars) == 4:
@@ -177,7 +181,8 @@ def main():
             prop.append([c / total for c in count])
 
         if plot:
-            plot_alignment(seqs, chars, sums, chi2, stds, prop, chi2_cut, outdir=outdir, fname='filt1')
+            plot_alignment(seqs, chars, sums, chi2, stds, prop, chi2_cut, outdir=outdir,
+                           fname='filt1', nox=opts.nox)
         seqs = [[seqs[i][j] for j in good_cols] for i in xrange(nseqs)]
 
         print '   * kept {:,} of {:,} columns'.format(len(good_cols), lseqs)
@@ -256,6 +261,9 @@ def get_options():
     parser.add_argument('--plot', dest='plot',
                         action='store_true', default=False,
                         help=('generate interactive alignment plots with descriptive stats'))
+    parser.add_argument('--nox', dest='nox',
+                        action='store_true', default=False,
+                        help=('no X available for plotting'))
     parser.add_argument('--chi2', dest='chi2',
                         action='store_true', default=False,
                         help=('filter out columns with random distribution '
