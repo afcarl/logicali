@@ -1,10 +1,13 @@
 #!/usr/bin/env python
 
-from itertools import izip
-from argparse  import ArgumentParser
-from time      import time
-from datetime  import datetime as dt
-from sys import stdout
+from itertools       import izip
+from argparse        import ArgumentParser
+from time            import time
+from datetime        import datetime as dt
+from sys             import stdout
+from collections     import OrderedDict
+from multiprocessing import Pool, cpu_count
+
 
 # generated using scipy.stats.chi2
 CHI2_CUT = {'0.00001': {3: 23.0259, 4: 25.9017, 5: 28.4733, 6: 30.8562, 7: 33.1071, 8: 35.2585, 9: 37.3316, 10: 39.3407, 11: 41.2962, 12: 43.2060, 13: 45.0761, 14: 46.9116, 15: 48.7161, 16: 50.4930, 17: 52.2450, 18: 53.9743, 19: 55.6829, 20: 57.3725, 21: 59.0446, 22: 60.7003, 23: 62.3410, 24: 63.9675, 25: 65.5808, 26: 67.1818, 27: 68.7710, 28: 70.3492, 29: 71.9170, 30: 73.4749},
@@ -133,6 +136,109 @@ def plot_alignment(seqs, chars, sums, chi2, stds, prop, chi2_cut,
         plt.show()
 
 
+def _best_chunk_size(nseqs, lseqs, ncpus):
+    njobs = int(float(nseqs * lseqs) / 50000000)
+    # and be a multiple of the number of CPUs
+    njobs = njobs + ncpus - njobs % ncpus - 1
+    return nseqs / njobs
+
+
+def get_denser_columns(seqs, cutoff, ncpus):
+    nseqs, lseqs = len(seqs), len(seqs[0])
+
+    col_cutoff = nseqs - cutoff
+
+    ##  search for dense columns
+    p = Pool(ncpus)
+    # each job should not exceed 50M character to avoid transferring too much data
+    diff = _best_chunk_size(nseqs, lseqs, ncpus)
+    procs = []
+    for i in xrange(0, len(seqs), diff):
+        procs.append(p.apply_async(_sub_get_dense_cols, (seqs[i:i + diff],)))
+
+    p.close()
+    p.join()
+
+    good_cols = procs.pop().get()
+    for p in procs:
+        good_cols = [good_cols[i] + v for i, v in enumerate(p.get())]
+
+    return [i for i, col in enumerate(good_cols) if col < col_cutoff]
+
+
+def _sub_get_dense_cols(seqs):
+    return [col.count('-') for col in izip(*seqs)]
+
+
+def filter_seqs(seqs, good_cols, ncpus):
+    nseqs, lseqs = len(seqs), len(seqs[0])
+
+    # each job should not exceed 50M character to avoid transferring too much data
+    diff = _best_chunk_size(nseqs, lseqs, ncpus)
+
+    p = Pool(ncpus)
+    procs = []
+    for i in xrange(0, len(seqs), diff):
+        procs.append(p.apply_async(_sub_filter_seqs, (seqs[i:i+diff], good_cols)))
+
+    p.close()
+    p.join()
+    return [s for p in procs for s in p.get()]
+
+
+def _sub_filter_seqs(seqs, good_columns):
+    return [''.join(seq[j] for j in good_columns) for seq in seqs]
+
+
+def complexity_filtering(seqs, chars, chi2_cut, ncpus):
+    nseqs, lseqs = len(seqs), len(seqs[0])
+
+    # each job should not exceed 50M character to avoid transferring too much data
+    diff = _best_chunk_size(nseqs, lseqs, ncpus)
+
+    p = Pool(ncpus)
+    procs = []
+    for i in xrange(0, nseqs, diff):
+        procs.append(p.apply_async(_sub_complexity_filtering, (seqs[i:i + diff], chars)))
+    p.close()
+    p.join()
+
+    counts = procs.pop().get()
+    for p in procs:
+        counts = [[counts[i][j] + v for j, v in enumerate(l)] for i, l in enumerate(p.get())]
+
+    expected = {}
+    total = float(sum(sum(c) for c in counts))
+    for i, c in enumerate(chars):
+        expected[c] = sum(c[i] for c in counts) / total
+
+    printime('   * proportion of each site type: ' +
+             ', '.join(['%s: %.4f' % (c.upper(), expected[c]) for c in chars]))
+
+    good_cols = []
+    mean = 1. / len(expected)
+    sums = []
+    prop = []
+    stds = []
+    chi2 = []
+    for i in xrange(lseqs):
+        count = counts[i]
+        total = float(sum(count)) or 1  # in case total is equal to 0
+        std = sum((c / total - mean)**2 for c in count)
+        stds.append(std**0.5)
+        sums.append(total)
+        av = [total  * expected[c] for c in expected]
+        chi2.append(sum((c - av[i])**2 / av[i] for i, c in enumerate(count)))
+        if chi2[-1] > chi2_cut:
+            good_cols.append(i)
+        prop.append([c / total for c in count])
+    return sums, prop, stds, good_cols, expected
+
+
+def _sub_complexity_filtering(seqs, chars):
+    return [[col.count(c) for c in chars] for col in izip(*seqs)]
+
+
 def main():
     opts = get_options()
 
@@ -141,6 +247,8 @@ def main():
     plot = opts.plot
     output = opts.output
     filt_chi2 = opts.chi2
+    ncpus = opts.ncpus
+    molecule = opts.molecule
 
     print '\n Logicali trimming sequences...'
 
@@ -153,7 +261,7 @@ def main():
     printime('   * {:,} sequences with {:,} sites'.format(nseqs, lseqs))
 
     # find out if nucleotides or AA, checking first ~1000 chars
-    chars = get_molecules(seqs, opts.molecule)
+    chars = get_molecules(seqs, molecule)
 
     if filt_chi2 is not None:
         try:
@@ -172,68 +280,31 @@ def main():
     ################################################################################
     # keep only columns with data in at least a given number of sites
     printime('\n - removing sites with data in less than {} rows'.format(cutoff))
-    col_cutoff = nseqs - cutoff
+    good_cols = get_denser_columns(seqs, cutoff, ncpus)
 
-    good_cols = [i for i, col in enumerate(izip(*seqs)) if col.count('-') < col_cutoff]
-    # TODO: TRY: instead of storing good_cols directly store cols, use them for chi2,and then zip them back
-    # OR/AND: parallelize
-    seqs = [[seqs[i][j] for j in good_cols] for i in xrange(nseqs)]
+    ##  join sequences with good columns
+    seqs = filter_seqs(seqs, good_cols, ncpus)
+    lseqs = len(seqs[0])
 
     printime('   * kept {:,} of {:,} columns'.format(len(good_cols), lseqs))
-
-    lseqs = len(seqs[0])
 
     ################################################################################
     # keep only columns with low complexity
     if filt_chi2 is not None:
         printime(('\n - removing sites low complexity\n        '
                   '(random distribution: chi2 test p-value < %s)') % filt_chi2)
-        col_cutoff = nseqs - cutoff
 
-        expected = {}
-        for c in chars[:]:
-            expected[c] = sum(s==c for l in seqs for s in l)
-            if not expected[c]:
-                chars.remove(c)
-                del(expected[c])
-
-        total = float(sum(expected.values()))
-        for c in expected:
-            try:
-                expected[c] /= total
-            except ZeroDivisionError:
-                expected[c] = 0
-
-        printime('   * proportion of each site type: ' +
-                 ', '.join(['%s: %.4f' % (c.upper(), expected[c]) for c in chars]))
-
-        good_cols = []
-        mean = 1. / len(chars)
-        sums = []
-        prop = []
-        stds = []
-        chi2 = []
-        for i, col in enumerate(izip(*seqs)):
-            count = [col.count(c) for c in chars]
-            total = float(sum(count)) or 1  # in case total is equal to 0
-            std = sum((c / total - mean)**2 for c in count)
-            stds.append(std**0.5)
-            sums.append(total)
-            av = [total  * expected[c] for c in chars]
-            chi2.append(sum((c - av[i])**2 / av[i] for i, c in enumerate(count)))
-            if chi2[-1] > chi2_cut:
-                good_cols.append(i)
-            prop.append([c / total for c in count])
+        sums, prop, stds, good_cols, expected = complexity_filtering(seqs, chars, chi2_cut, ncpus)
 
         if plot:
             printime('   * plotting')
             plot_alignment(seqs, chars, sums, chi2, stds, prop, chi2_cut,
                            savefig=output + '_filt1', nox=opts.nox)
-        seqs = [[seqs[i][j] for j in good_cols] for i in xrange(nseqs)]
+        seqs = filter_seqs(seqs, good_cols, ncpus)
+        lseqs = len(seqs[0])
 
         printime('   * kept {:,} of {:,} columns'.format(len(good_cols), lseqs))
 
-        lseqs = len(seqs[0])
 
     ################################################################################
     # mask lonely sites (surrounded by gaps)
@@ -256,7 +327,7 @@ def main():
         ################################################################################
         # keep only columns with data in at least a given number of sites (second round)
         printime('\n - removing sites with data in less than {} rows'.format(cutoff))
-        good_cols = [i for i, col in enumerate(izip(*seqs)) if col.count('-') < col_cutoff]
+        good_cols = get_denser_columns(seqs, cutoff, ncpus)
 
         printime('   * kept {:,} of {:,} columns'.format(len(good_cols), lseqs))
 
@@ -288,9 +359,7 @@ def main():
     # write result
     print('\n - saving data')
     out = open(output, 'w')
-    out.write(''.join('%s\n%s\n' % (names[i],
-                                    ''.join(l))
-                      for i, l in enumerate(seqs)))
+    out.write(''.join('%s\n%s\n' % (names[i], l) for i, l in enumerate(seqs)))
     out.close()
 
     printime('\nDone.\n')
@@ -311,6 +380,9 @@ def get_options():
     parser.add_argument('--molecule', dest='molecule',
                         default='auto', choices=['auto', 'dna',  'protein'],
                         help=('[%(default)s] sequence type, by default inferred from input.'))
+    parser.add_argument('-C', dest='ncpus',
+                        default=cpu_count(), type=int,
+                        help=('[%(default)s] number of CPUs to use.'))
     parser.add_argument('--nox', dest='nox',
                         action='store_true', default=False,
                         help=('no X available for plotting'))
