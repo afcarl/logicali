@@ -232,7 +232,7 @@ def complexity_filtering(seqs, chars, chi2_cut, ncpus):
         if chi2[-1] > chi2_cut:
             good_cols.append(i)
         prop.append([c / total for c in count])
-    return sums, prop, stds, good_cols, expected
+    return sums, prop, stds, chi2, good_cols, expected
 
 
 def _sub_complexity_filtering(seqs, chars):
@@ -295,7 +295,7 @@ def main():
         printime(('\n - removing sites low complexity\n        '
                   '(random distribution: chi2 test p-value < %s)') % filt_chi2)
 
-        sums, prop, stds, good_cols, expected = complexity_filtering(seqs, chars, chi2_cut, ncpus)
+        sums, prop, stds, chi2, good_cols, expected = complexity_filtering(seqs, chars, chi2_cut, ncpus)
 
         if plot:
             printime('   * plotting')
