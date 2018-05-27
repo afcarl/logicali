@@ -159,7 +159,7 @@ def get_denser_columns(seqs, cutoff, ncpus):
     p.close()
     p.join()
 
-    good_cols = procs.pop().get()
+    good_cols = procs.pop(0).get()
     for p in procs:
         good_cols = [good_cols[i] + v for i, v in enumerate(p.get())]
 
@@ -203,7 +203,7 @@ def complexity_filtering(seqs, chars, chi2_cut, ncpus):
     p.close()
     p.join()
 
-    counts = procs.pop().get()
+    counts = procs.pop(0).get()
     for p in procs:
         counts = [[counts[i][j] + v for j, v in enumerate(l)] for i, l in enumerate(p.get())]
 
@@ -227,7 +227,7 @@ def complexity_filtering(seqs, chars, chi2_cut, ncpus):
         std = sum((c / total - mean)**2 for c in count)
         stds.append(std**0.5)
         sums.append(total)
-        av = [total  * expected[c] for c in expected]
+        av = [total  * expected[c] for c in chars]
         chi2.append(sum((c - av[i])**2 / av[i] for i, c in enumerate(count)))
         if chi2[-1] > chi2_cut:
             good_cols.append(i)
@@ -284,9 +284,10 @@ def main():
 
     ##  join sequences with good columns
     seqs = filter_seqs(seqs, good_cols, ncpus)
-    lseqs = len(seqs[0])
 
     printime('   * kept {:,} of {:,} columns'.format(len(good_cols), lseqs))
+
+    lseqs = len(seqs[0])
 
     ################################################################################
     # keep only columns with low complexity
@@ -301,10 +302,10 @@ def main():
             plot_alignment(seqs, chars, sums, chi2, stds, prop, chi2_cut,
                            savefig=output + '_filt1', nox=opts.nox)
         seqs = filter_seqs(seqs, good_cols, ncpus)
-        lseqs = len(seqs[0])
 
         printime('   * kept {:,} of {:,} columns'.format(len(good_cols), lseqs))
 
+        lseqs = len(seqs[0])
 
     ################################################################################
     # mask lonely sites (surrounded by gaps)
