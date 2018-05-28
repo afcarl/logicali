@@ -5,7 +5,6 @@ from argparse        import ArgumentParser
 from time            import time
 from datetime        import datetime as dt
 from sys             import stdout
-from collections     import OrderedDict
 from multiprocessing import Pool, cpu_count
 
 
@@ -310,29 +309,27 @@ def main():
     ################################################################################
     # mask lonely sites (surrounded by gaps)
     if opts.mask_lonely:
-        printime('\n - removing single sites surrounded by gaps')
-        for l in seqs:
+        printime('\n - removing single sites surrounded by gaps (DANGER!)')
+        for l in xrange(nseqs):
             # rule for first and last
-            if l[1] == '-':
-                l[0] = '-'
-            if l[-2] == '-':
-                l[-1] = '-'
+            if seqs[l][1] == '-':
+                seqs[l] = '-' + seqs[l][1:]
+            if seqs[l][-2] == '-':
+                seqs[l] = seqs[l][:-1] + '-'
             for i in xrange(lseqs - 2):
-                if l[i] == '-':
-                    if l[i+2] == '-':
-                        l[i+1] = '-'
-                    elif i+3 < lseqs and l[i+3] == '-':
-                        l[i+1] = '-'
-                        l[i+2] = '-'
+                if seqs[l][i] == '-':
+                    if seqs[l][i+2] == '-':
+                        seqs[l] =  seqs[l][:i+1] + '-' + seqs[l][i+2:]
 
         ################################################################################
         # keep only columns with data in at least a given number of sites (second round)
-        printime('\n - removing sites with data in less than {} rows'.format(cutoff))
+        printime('\n - second round removing sites with data in less '
+                 'than {} rows'.format(cutoff))
         good_cols = get_denser_columns(seqs, cutoff, ncpus)
 
         printime('   * kept {:,} of {:,} columns'.format(len(good_cols), lseqs))
 
-        seqs = [[seqs[i][j] for j in good_cols] for i in xrange(nseqs)]
+        seqs = filter_seqs(seqs, good_cols, ncpus)
 
         lseqs = len(seqs[0])
 
@@ -391,13 +388,14 @@ def get_options():
                         help=(('[%(default)s] filter out columns with random '
                               'distribution of sites with respect to background '
                               'proportions computed from input alignment. '
-                              'Alternative p-value can be passed, the lower the more '
-                               'columns filtered out (pre-computed: {}).').format(
-                                  str(sorted(CHI2_CUT.keys(), key=lambda x: float(x)))
-                              )))
+                              'Alternative p-value can be passed, the lower the '
+                               'more columns filtered out (pre-computed: {}; '
+                               'scipy needed for alternative values).').format(
+                                  str(sorted(CHI2_CUT.keys(), key=float)))))
     parser.add_argument('--mask_lonely', dest='mask_lonely',
                         action='store_true', default=False,
-                        help=('treat as gaps sites surrounded by gaps '))
+                        help=('treat as gaps sites surrounded by gaps, and '
+                              'filter columns again (PROBABLY A BAD IDEA)'))
     parser.add_argument('-n', '--ndata', dest='ndata', metavar="INT", default=100,
                         type=int,
                         help='[%(default)s] Minimum number of sites with data per column.')
